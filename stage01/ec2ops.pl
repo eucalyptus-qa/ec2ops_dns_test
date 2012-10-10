@@ -19,13 +19,17 @@ $library_sleep = 0;
 $devname = "/dev/sdc";
 $emitype = "instancestoreemi";
 $keypath = ".";
-$bfe_image = "http://192.168.7.65/bfebs-image/bfebs.img";
+$bfe_image = "http://mirror.qa.eucalyptus-systems.com/bfebs-image/bfebs.img";
 $piperetries = 1;
-$use_dnsnames = 0;
+$imgfile="";
 
-sub setusednsnames {
-    my $flag = shift @_;
-    $use_dnsnames = $flag;
+sub save_volid {
+    my $vol = shift @_;
+    if ($vol =~ /vol/ && -d "../etc/" ) {
+	open(RFH, ">>../etc/vols.lst");
+	print RFH "$vol\n";
+	close(RFH);
+    }
     return(0);
 }
 
@@ -162,9 +166,9 @@ sub install_ec2_api_tools {
     run_command("ssh -o StrictHostKeyChecking=no root\@$current_artifacts{remoteip} 'cd /tmp/; unzip -o $file'");
     
     if ($filever eq "latest") {
-	$cmd = "ssh -o StrictHostKeyChecking=no root\@$current_artifacts{remoteip} 'ls -1ad /tmp/ec2-api-tools\*/'";
+	$cmd = "$runat ssh -o StrictHostKeyChecking=no root\@$current_artifacts{remoteip} 'ls -1ad /tmp/ec2-api-tools\*/'";
     } else {
-	$cmd = "ssh -o StrictHostKeyChecking=no root\@$current_artifacts{remoteip} 'ls -1ad /tmp/$ver/'";
+	$cmd = "$runat ssh -o StrictHostKeyChecking=no root\@$current_artifacts{remoteip} 'ls -1ad /tmp/$ver/'";
     }
     my ($rc, $crc, $buf) = piperun($cmd, "grep ec2-api-tools | tail -n 1", "ubero");
     if ($rc || $crc || !$buf) {
@@ -368,11 +372,7 @@ sub control_component_script {
 
     my ($crc, $rc, $buf) = piperun($cmd, "", "ubero");
     if (($crc || $rc)) {
-	if ($op eq "STOP") {
-	    doexit(1, "FAILED: ($crc, $rc, $buf) = $cmd\n");
-	} else {
-	    print "WARN: failed to $op component ($crc, $rc, $buf)\n";
-	}
+	print "WARN: failed to $op component ($crc, $rc, $buf)\n";
     }
     if ($cleancmd) {
 	my ($rc, $crc, $buf) = piperun($cleancmd, "", "ubero");
@@ -477,11 +477,13 @@ sub find_real_master {
 	close(FH);
 	$cmd = "cat /tmp/ec2ops.out.$$";
 	if ($service ne "arbitrator") {
-	    ($crc, $rc, $buf) = piperun($cmd, "egrep -e 'SERVICE[[:space:]]$service' | awk '{print \$5, \$7, \$8}' | grep ENABLED | grep $masters{$component} | head -n 1", "ubero");
+	    print "\tsearching for enabled service=$service\n";
+	    ($crc, $rc, $buf) = piperun($cmd, "egrep -e 'SERVICE[[:space:]]+$service' | awk '{print \$5, \$7, \$8}' | grep ENABLED | grep $masters{$component} | head -n 1", "ubero");
+	    print "\tfound rc=$rc, crc=$crc, buf=$buf\n";
 	} else {
 	    print "RUNNING: $cmd : $masters{$component} : $service\n";
 	    system("$cmd");
-	    ($crc, $rc, $buf) = piperun($cmd, "egrep -e 'SERVICE[[:space:]]$service' | awk '{print \$5, \$7, \$8}' | grep $masters{$component} | head -n 1", "ubero");
+	    ($crc, $rc, $buf) = piperun($cmd, "egrep -e 'SERVICE[[:space:]]+$service' | awk '{print \$5, \$7, \$8}' | grep $masters{$component} | head -n 1", "ubero");
 	    print "DONE: $crc $rc |$buf|\n";
 	}
 	if ($crc) {
@@ -505,11 +507,13 @@ sub find_real_master {
 	}
 	$cmd = "cat /tmp/ec2ops.out.$$";
 	if ($service ne "arbitrator") {
-	    ($crc, $rc, $buf) = piperun($cmd, "egrep -e 'SERVICE[[:space:]]$service' | awk '{print \$5, \$7, \$8}' | grep ENABLED | grep $slaves{$component} | head -n 1", "ubero");
+	    print "\tsearching for enabled service=$service\n";
+	    ($crc, $rc, $buf) = piperun($cmd, "egrep -e 'SERVICE[[:space:]]+$service' | awk '{print \$5, \$7, \$8}' | grep ENABLED | grep $slaves{$component} | head -n 1", "ubero");
+	    print "\tfound rc=$rc, crc=$crc, buf=$buf\n";
 	} else {
 	    print "RUNNING: $cmd : $masters{$component} : $service\n";
 	    system("$cmd");
-	    ($crc, $rc, $buf) = piperun($cmd, "egrep -e 'SERVICE[[:space:]]$service' | awk '{print \$5, \$7, \$8}' | grep $slaves{$component} | head -n 1", "ubero");
+	    ($crc, $rc, $buf) = piperun($cmd, "egrep -e 'SERVICE[[:space:]]+$service' | awk '{print \$5, \$7, \$8}' | grep $slaves{$component} | head -n 1", "ubero");
 	    print "DONE: $crc $rc |$buf|\n";
 	}
 	if ($crc) {
@@ -559,7 +563,7 @@ sub find_arbitrator {
     print FH "$current_artifacts{master_ds_buf}\n";
     close(FH);
     $cmd = "cat /tmp/ec2ops.out.$$";
-    ($crc, $rc, $buf) = piperun($cmd, "egrep -e 'SERVICE[[:space:]]$service' | awk '{print \$5, \$7, \$8}' | grep ENABLED | grep $component | head -n 1", "ubero");
+    ($crc, $rc, $buf) = piperun($cmd, "egrep -e 'SERVICE[[:space:]]+$service' | awk '{print \$5, \$7, \$8}' | grep ENABLED | grep $component | head -n 1", "ubero");
     if ($crc) {
 	print "\t$service $component: cannot determine status\n";
     } elsif ($rc || !$buf || $buf eq "") {
@@ -577,19 +581,22 @@ sub sync_qa_credentials {
     my $fromip = shift @_;
     my $toip = shift @_;
 
+    print "\tsync_qa_credentials: FROM=$fromip TO=$toip\n";
     if ($fromip =~ /\d+\.\d+\.\d+\.\d+/ && $toip =~ /\d+\.\d+\.\d+\.\d+/) {
-	my $cmd = "$runat scp -o StrictHostKeyChecking=no root\@$fromip:/root/admin_cred.zip /tmp/admin_cred.zip.$$";
+	my $cmd = "ssh -o StrictHostKeyChecking=no root\@$fromip 'if ( ! test -f /root/admin_cred.zip ); then $current_artifacts{eucahome}/usr/sbin/euca_conf --get-credentials /root/admin_cred.zip; fi'";
 	run_command("$cmd", "no");
-	my $cmd = "$runat scp -o StrictHostKeyChecking=no /tmp/admin_cred.zip.$$ root\@$toip:/root/admin_cred.zip";
+	my $cmd = "scp -o StrictHostKeyChecking=no root\@$fromip:/root/admin_cred.zip /tmp/admin_cred.zip.$$";
 	run_command("$cmd", "no");
-	my $cmd = "$runat scp -o StrictHostKeyChecking=no root\@$toip:/root/admin_cred.zip /tmp/admin_cred.zip.$$";
+	my $cmd = "scp -o StrictHostKeyChecking=no /tmp/admin_cred.zip.$$ root\@$toip:/root/admin_cred.zip";
 	run_command("$cmd", "no");
-	my $cmd = "$runat scp -o StrictHostKeyChecking=no /tmp/admin_cred.zip.$$ root\@$fromip:/root/admin_cred.zip";
+	my $cmd = "scp -o StrictHostKeyChecking=no root\@$toip:/root/admin_cred.zip /tmp/admin_cred.zip.$$";
+	run_command("$cmd", "no");
+	my $cmd = "scp -o StrictHostKeyChecking=no /tmp/admin_cred.zip.$$ root\@$fromip:/root/admin_cred.zip";
 	run_command("$cmd", "no");
 
-	my $cmd = "$runat ssh -o StrictHostKeyChecking=no root\@$fromip unzip -o /root/admin_cred.zip";
+	my $cmd = "ssh -o StrictHostKeyChecking=no root\@$fromip unzip -o /root/admin_cred.zip";
 	run_command("$cmd", "no");
-	my $cmd = "$runat ssh -o StrictHostKeyChecking=no root\@$toip unzip -o /root/admin_cred.zip";
+	my $cmd = "ssh -o StrictHostKeyChecking=no root\@$toip unzip -o /root/admin_cred.zip";
 	run_command("$cmd", "no");
     }
     return(0);
@@ -639,13 +646,13 @@ sub parse_input {
 		    $cc_has_broker{"CC$1"} = 1;
 		}
 		if ($component =~ /NC\d+/) {
-		    if ($distro eq "FEDORA" || $distro eq "DEBIAN" || ($distro eq "RHEL" && $version =~ /^6\./)) {
+		    if ($distro eq "FEDORA" || $distro eq "DEBIAN" || ( ($distro eq "RHEL" || $distro eq "CENTOS") && $version =~ /^6\./) || ($distro eq "UBUNTU" && ( $source eq "REPO" || $version eq "PRECISE" )) ) {
 			$use_virtio = 1;
-			setbfeimagelocation("http://192.168.7.65/bfebs-image/bfebs.img");
+			setbfeimagelocation("http://mirror.qa.eucalyptus-systems.com/bfebs-image/bfebs.img");
 		    } elsif ($distro eq "UBUNTU") {
-			setbfeimagelocation("http://192.168.7.65/bfebs-image/bfebs.img");
+			setbfeimagelocation("http://mirror.qa.eucalyptus-systems.com/bfebs-image/bfebs.img");
 		    } else {
-			setbfeimagelocation("http://192.168.7.65/bfebs-image/bfebs-xen.img");
+			setbfeimagelocation("http://mirror.qa.eucalyptus-systems.com/bfebs-image/bfebs-xen.img");
 		    }
 		    
 		}
@@ -654,7 +661,7 @@ sub parse_input {
 	# for setting windows images
 	if ($line =~ /IMG_FILE=(.)+/){
              my @fields = split /\=/, $line;
-	     my $imgfile = $fields[1];
+	     $imgfile = $fields[1];
              $imgfile =~ s/\n|\r//;
 	     $bfe_image="";
 	     setbfeimagelocation("http://dmirror.eucalyptus/windows_images/$imgfile");	
@@ -685,9 +692,19 @@ sub parse_input {
     if ($use_virtio) {
 	$devname = "/dev/vdb";
 	print "Using virtio device name: $devname\n";
-    }
+    }else{
+	### FOR USING PRECISE INSTANCE IMAGE 	090412
+        ### FIXED TO IGNORE VMWARE CASE         090812
+        my $this_nc = `cat ../input/2b_tested.lst | grep NC00 | head -n 1`;
+        chomp($this_nc);
+        if( !($this_nc =~ /VMWARE/) ){
+                $devname = "/dev/xvdb";
+                print "Using virtio device name: $devname\n";
+        };
+    };
     
     if ($isha) {
+	setremote($masters{CLC});
 	sync_qa_credentials($masters{CLC}, $slaves{CLC});
 	print "Synced /root/admin_cred.zip across CLCs\n";
 	
@@ -722,6 +739,8 @@ sub check_services_up {
 	$rc = find_real_master($key);
 	for ($i=0; $i<180 && $rc; $i++) {
 	    print "\tcheck_services_up(): checking for component $key\n";
+	    sync_qa_credentials($masters{CLC}, $slaves{CLC});
+	    print "\tre-downloaded and re-synced /root/admin_cred.zip across CLCs\n";
 	    describe_services();
 	    $rc = find_real_master($key);
 	}
@@ -960,13 +979,21 @@ sub find_instance_volume {
     sleep($library_sleep);
 
     if ($use_virtio) {
-	$cmd = "$runat ssh -o StrictHostKeyChecking=no -i $keypairfile root\@$instanceip ls /dev/vd\*";
+	$cmd = "$runat ssh -o StrictHostKeyChecking=no -i $keypairfile root\@$instanceip 'ls /dev/vd\* | tail -n 1 | grep -v -e [0-9]'";
     } else {
-	$cmd = "$runat ssh -o StrictHostKeyChecking=no -i $keypairfile root\@$instanceip 'ls /dev/sd\* | grep -v sda'";
+	### FOR PRECISE INSTANCE IMAGE
+        ### FIXED TO IGNORE VMWARE CASE         090812
+        my $this_nc = `cat ../input/2b_tested.lst | grep NC00 | head -n 1`;
+        chomp($this_nc);
+        if( !($this_nc =~ /VMWARE/) ){
+		$cmd = "$runat ssh -o StrictHostKeyChecking=no -i $keypairfile root\@$instanceip 'ls /dev/xvd\* | grep -v xvda | tail -n 1 | grep -v -e [0-9]'";
+	}else{
+		$cmd = "$runat ssh -o StrictHostKeyChecking=no -i $keypairfile root\@$instanceip 'ls /dev/sd\* | grep -v sda | tail -n 1 | grep -v -e [0-9]'";
+	};
     }
     $done=0; 
     my $i;
-    for ($i=0; $i<10 && !$done; $i++) {
+    for ($i=0; $i<60 && !$done; $i++) {
 	($crc, $rc, $buf) = piperun($cmd, "grep -v RUNAT | grep dev | tail -n 1", "$ofile");
 	if ($rc || ! ($buf =~ /^\/dev\/.*/) ) {
 	    print "\twaiting for dev to appear...\n";
@@ -1012,6 +1039,9 @@ sub run_command_not {
 
 sub ping_instance_from_cc {
     $instanceip = shift @_ || $current_artifacts{instanceprivateip};
+    $doexit = shift @_ || "y";
+    my $bfebs = shift @_ || 0;
+
     my @ccips, $ccidx=0, $key;
 
     foreach $key (keys(%masters)) {
@@ -1030,6 +1060,13 @@ sub ping_instance_from_cc {
     if (! ($instanceip =~ /\d+\.\d+\.\d+\.\d+/) ) {
 	doexit(1, "ERROR: invalid instanceip '$instanceip'\n");
     }
+
+    if ($bfe_image =~ /windows.*/ and $bfebs){
+          if($imgfile =~ /2008.*/ or $imgfile =~ /windows7.*/){
+		print "passing PING tests on newer windows versions ($imgfile)\n";
+		return(0);
+          }
+    }
     
     sleep($library_sleep);
     
@@ -1039,7 +1076,7 @@ sub ping_instance_from_cc {
 	for ($j=0; $j<$ccidx && !$done; $j++) {
 	    $ccip = $ccips[$j];
 	    if ($ccip =~ /\d+\.\d+\.\d+\.\d+/) {
-		$cmd = "$runat ssh -o StrictHostKeyChecking=no root\@$ccip 'ping -c 1 $instanceip'";
+		$cmd = "$runat ssh -o StrictHostKeyChecking=no root\@$ccip 'ping -c 1 -w 1 $instanceip'";
 		($crc, $rc, $buf) = piperun($cmd, "", "$ofile");
 		if (!$rc && !$crc) {
 		    $current_artifacts{instancecc} = $ccip;
@@ -1054,7 +1091,11 @@ sub ping_instance_from_cc {
 	}
     }
     if (!$done) {
-	doexit(1, "FAILED: could not ping instance ($instanceip) from cc ($ccip)\n");
+	if ($doexit eq "y") {
+	    doexit(1, "FAILED: could not ping instance ($instanceip) from cc ($ccip)\n");
+	} else {
+	    print "\tWARN: couldn't ping instance ($instanceip) from cc ($ccip), skipping\n";
+	}
     }
 
     return(0);
@@ -1146,13 +1187,14 @@ sub setemitype {
 
 sub run_instances {
     my $num = shift @_ || 1;
+    my $bfebs = shift @_ || 0;
 
     my $emi = $current_artifacts{$emitype};
     my $keypair = $current_artifacts{keypair};
     my $zone = $current_artifacts{availabilityzone};
     my $group = $current_artifacts{group};
     my $type = "m1.small";
-    if ($bfe_image =~ /windows.*/){
+    if ($bfe_image =~ /windows.*/ and $bfebs){
 	$type = "m1.xlarge";
     }
 
@@ -1235,13 +1277,13 @@ sub transfer_credentials {
     my $fromip = shift @_ || $masters{"CLC"};    
     my $toip = shift @_ || $masters{"CLC"};    
 
-    my $cmd = "$runat scp -o StrictHostKeyChecking=no root\@$fromip:/root/eucalyptus-admin-qa.zip /tmp/eucalyptus-admin-qa.zip.$$";
+    my $cmd = "scp -o StrictHostKeyChecking=no root\@$fromip:/root/eucalyptus-admin-qa.zip /tmp/eucalyptus-admin-qa.zip.$$";
     run_command("$cmd");
 
-    my $cmd = "$runat scp -o StrictHostKeyChecking=no /tmp/eucalyptus-admin-qa.zip.$$ root\@$toip:/root/eucalyptus-admin-qa.zip";
+    my $cmd = "scp -o StrictHostKeyChecking=no /tmp/eucalyptus-admin-qa.zip.$$ root\@$toip:/root/eucalyptus-admin-qa.zip";
     run_command("$cmd");
 
-    my $cmd = "$runat ssh -o StrictHostKeyChecking=no root\@$toip unzip -o /root/eucalyptus-admin-qa.zip -d /root/eucalyptus-admin-qa/";
+    my $cmd = "ssh -o StrictHostKeyChecking=no root\@$toip unzip -o /root/eucalyptus-admin-qa.zip -d /root/eucalyptus-admin-qa/";
     run_command("$cmd");
 
     unlink("/tmp/eucalyptus-admin-qa.zip.$$");
@@ -1505,10 +1547,16 @@ sub create_volume {
     my $size = shift @_ || 1;
     if ($bfe_image =~ /windows.*/){
 	    $size=15;
-            $remote_cmd = "ssh -o StrictHostKeyChecking=no root\@$current_artifacts{remoteip} 'source /root/eucarc; $current_artifacts{eucahome}/usr/sbin/euca-modify-property -p $current_artifacts{availabilityzone}.storage.maxvolumesizeingb=$size > /dev/null 2>&1'"; 
+            $remote_cmd = "$runat ssh -o StrictHostKeyChecking=no root\@$current_artifacts{remoteip} 'source /root/eucarc; $current_artifacts{eucahome}/usr/sbin/euca-modify-property -p $current_artifacts{availabilityzone}.storage.maxvolumesizeingb=$size > /dev/null 2>&1'"; 
             ($crc, $rc, $buf) = piperun($remote_cmd, "", "ubero");  
 	    if($rc){	
 	         doexit(1, "FAILED: ($rc, $buf) = $remote_cmd\n");
+            }
+
+            $remote_cmd = "$runat ssh -o StrictHostKeyChecking=no root\@$current_artifacts{remoteip} 'source /root/eucarc; $current_artifacts{eucahome}/usr/sbin/euca-modify-property -p $current_artifacts{availabilityzone}.storage.shouldtransfersnapshots=false > /dev/null 2>&1'";
+            ($crc, $rc, $buf) = piperun($remote_cmd, "", "ubero");
+            if($rc){
+                 doexit(1, "FAILED: ($rc, $buf) = $remote_cmd\n");
             }
     }
 
@@ -1525,6 +1573,7 @@ sub create_volume {
     if ($rc || !$buf || !$buf =~ "vol-") {
 	doexit(1, "FAILED: ($rc, $buf) = $cmd\n");
     }
+    save_volid("$buf");
     $cleanup_artifacts{"volumes"} .= "$buf ";    
     $current_artifacts{"volume"} = $buf;
     $current_artifacts{"volumestate"} = "UNSET";
@@ -1554,6 +1603,7 @@ sub create_snapshot_volume {
     if ($rc || !$buf || !$buf =~ "vol-") {
 	doexit(1, "FAILED: ($rc, $buf) = $cmd\n");
     }
+    save_volid("$buf");
     $cleanup_artifacts{"volumes"} .= "$buf ";    
     $current_artifacts{"volume"} = $buf;
     $current_artifacts{"volumestate"} = "UNSET";
@@ -2099,9 +2149,19 @@ sub docleanup {
     print "\n";
     
     print "Volumes\n\t";
-    foreach $vol (split(/\s+/, $cleanup_artifacts{"volumes"})) {
+    # snoop for bfebs volumes left behind
+    if ($current_artifacts{snapshot}) {
+	$cmd = "$runat $remote_pre $prefix-describe-volumes $remote_post";
+	($crc, $rc, $buf) = piperun($cmd, "grep $current_artifacts{snapshot} | awk '{print \$2}'", "$ofile");
+	if (!$crc && !$rc && $buf ne "") {
+	    $buf =~ s/\s+/ /g;
+	    $cleanup_artifacts{"volumes"} .= "$buf";
+	}
+    }
+    foreach $vol (split(/\s+/, $cleanup_artifacts{"volumes"})) {	
 	if ($vol) {
 	    print "$vol";
+	    save_volid("$vol");
 	    $cmd = "$runat $remote_pre $prefix-delete-volume $vol $remote_post";
 	    ($crc, $rc, $buf) = piperun($cmd, "", "$ofile");
 	    if ($crc || $rc) { print "(failed) "; $failures++; } else { print "(success) "; }
@@ -2244,15 +2304,10 @@ sub setremote {
     my $remoteip = shift @_ || $current_artifacts{remoteip};
     
     if ($remoteip && $remoteip ne "") {
-	if ($use_dnsnames) {
-	    $remote_url_name = "eucalyptus.eucadomain.eucaqa";
-	} else {
-	    $remote_url_name = "$remoteip";
-	}
 	if ($current_artifacts{account} && $current_artifacts{user}) {
-	    $remote_pre = "ssh -o StrictHostKeyChecking=no root\@$remoteip 'source /root/$current_artifacts{account}-$current_artifacts{user}-qa/eucarc; export EC2_URL=http://$remote_url_name:8773/services/Eucalyptus; ";
+	    $remote_pre = "ssh -o StrictHostKeyChecking=no root\@$remoteip 'source /root/$current_artifacts{account}-$current_artifacts{user}-qa/eucarc; export EC2_URL=http://$remoteip:8773/services/Eucalyptus; ";
 	} else {
-	    $remote_pre = "ssh -o StrictHostKeyChecking=no root\@$remoteip 'source /root/eucarc; export EC2_URL=http://$remote_url_name:8773/services/Eucalyptus; ";
+	    $remote_pre = "ssh -o StrictHostKeyChecking=no root\@$remoteip 'source /root/eucarc; export EC2_URL=http://$remoteip:8773/services/Eucalyptus; ";
 	}
 	$remote_post = "'";
 	$cmd = "$runat $remote_pre uname -a $remote_post";
@@ -2277,7 +2332,7 @@ sub setremote {
 
 	$cmd = "$runat $remote_pre readlink -f \`which java\` $remote_post";
 	($crc, $rc, $buf) = piperun($cmd, "grep -v RUNATCMD | grep java", "$ofile");
-	if (!$crc && !$rc && $buf ne "") {
+	if ($buf ne "") {
 	    $buf =~ s/\/bin\/java//g;
 	    $remote_pre .= "export JAVA_HOME=$buf; export PATH=$buf/bin:\$PATH; ";
 	}
@@ -2574,12 +2629,12 @@ sub populate_volume_with_image {
 	doexit(1, "populate_volume(): no IP ($ip) of local EBS device name ($idev)\n");
     }
 
-    run_instance_command("echo 192.168.7.65 archive.ubuntu.com >> /etc/hosts");
-    run_instance_command("echo 192.168.7.65 security.ubuntu.com >> /etc/hosts");
+    run_instance_command("echo 192.168.51.160 archive.ubuntu.com >> /etc/hosts");	###	QUICK HACK TO RETIRE 192.168.7.65 - Kyo 10/09/12
+    run_instance_command("echo 192.168.51.160 security.ubuntu.com >> /etc/hosts");	###     QUICK HACK TO RETIRE 192.168.7.65 - Kyo 10/09/12
     $oldrunat = $runat;
-    setrunat("runat 120");
-    run_instance_command("apt-get update");
-    run_instance_command("apt-get install -y curl");
+    setrunat("runat 600");
+    run_instance_command("apt-get update; true");
+    run_instance_command("apt-get install -y curl; true");
     if ( $bfe_image =~ /windows.*/) {                        
         setrunat("runat 7200");
     } else {
@@ -2593,6 +2648,10 @@ sub populate_volume_with_image {
 
 sub stop_instance{
     my $inst = shift @_ || $current_artifacts{instance};
+    if ( $bfe_image =~ /windows.*/){
+         print "sleeping 180 seconds before stopping the instance\n"; 
+         sleep(180); # let's wait until windows vm fully boots
+    } 
 
     $cmd = "$runat $remote_pre $prefix-stop-instances $inst $remote_post";
     ($crc, $rc, $buf) = piperun($cmd, "", "$ofile");
@@ -2672,7 +2731,7 @@ sub setrandomip{
     }
     
     print "\tAdding IP: $ip from $toip\n";
-    my $cmd = "$runat ssh -o StrictHostKeyChecking=no root\@$toip ip addr add $ip/18 dev eth0";
+    my $cmd = "ssh -o StrictHostKeyChecking=no root\@$toip ip addr add $ip/18 dev eth0";
     run_command("$cmd");
     $current_artifacts{"arbitrator_ip"} = $ip;
 
@@ -2691,7 +2750,7 @@ sub removeip{
     }
 
     print "\tDeleting IP: $ip from $toip\n";
-    my $cmd = "$runat ssh -o StrictHostKeyChecking=no root\@$toip ip addr del $ip/18 dev eth0";
+    my $cmd = "ssh -o StrictHostKeyChecking=no root\@$toip ip addr del $ip/18 dev eth0";
     run_command("$cmd");
 
     if ($ip eq $current_artifacts{"arbitrator_ip"}) {
